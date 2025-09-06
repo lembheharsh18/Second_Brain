@@ -15,17 +15,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const db_1 = require("./db");
-const bcrypt_1 = __importDefault(require("bcrypt"));
+const middleware_1 = require("./middleware");
+const config_1 = require("./config");
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
-const JWT_PASSWORD = "1212111";
+// ✅ Use the same JWT secret from config
+const JWT_PASSWORD = config_1.your_jwt_secret;
 app.post("/api/v1/signup", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const username = req.body.username;
-    const password = req.body.password;
+    const { username, password } = req.body;
     try {
         yield db_1.UserModel.create({
-            username: username,
-            password: password
+            username,
+            password
         });
         res.json({
             message: "User Signed Up"
@@ -38,26 +39,70 @@ app.post("/api/v1/signup", (req, res) => __awaiter(void 0, void 0, void 0, funct
     }
 }));
 app.post("/api/v1/signin", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const username = req.body.username;
-    const password = req.body.password;
-    const existingUser = db_1.UserModel.findOne({
-        username
-    });
-    if (!existingUser) {
-        return res.status(403).json({ message: "Invalid Credentials" });
+    const { username, password } = req.body;
+    try {
+        const existingUser = yield db_1.UserModel.findOne({ username, password });
+        if (existingUser) {
+            // ✅ Use consistent JWT secret
+            const token = jsonwebtoken_1.default.sign({ id: existingUser._id }, JWT_PASSWORD, { expiresIn: '24h' });
+            res.json({ token });
+        }
+        else {
+            res.status(403).json({
+                message: "Invalid Credentials"
+            });
+        }
     }
-    const passwordMatch = yield bcrypt_1.default.compare(password, existingUser.password);
-    if (!passwordMatch) {
-        return res.status(403).json({ message: "Invalid Credentials" });
+    catch (e) {
+        console.error("Signin error:", e);
+        res.status(500).json({
+            message: "Something went wrong"
+        });
     }
-    const token = jsonwebtoken_1.default.sign({ id: existingUser._id }, process.env.JWT_PASSWORD || "secret" // replace this with env variable in production
-    );
-    res.json({ token });
 }));
-app.post("/api/v1/content", (req, res) => {
+app.post("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { title, link, type } = req.body;
+    const userId = req.userId;
+    try {
+        const content = yield db_1.ContentModel.create({
+            title,
+            link,
+            userId,
+            type,
+            tags: []
+        });
+        res.json({ message: "Content created", content });
+    }
+    catch (e) {
+        console.error("Content creation error:", e);
+        res.status(500).json({ message: "Error creating content" });
+    }
+}));
+app.get("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const userId = req.userId;
+    try {
+        const contents = yield db_1.ContentModel.find({ userId });
+        res.json({ contents });
+    }
+    catch (e) {
+        res.status(500).json({ message: "Error fetching content" });
+    }
+}));
+app.delete("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { id } = req.body;
+    const userId = req.userId;
+    try {
+        const result = yield db_1.ContentModel.deleteOne({ _id: id, userId });
+        if (result.deletedCount === 0) {
+            res.status(404).json({ message: "Content not found or unauthorized" });
+            return;
+        }
+        res.json({ message: "Content deleted" });
+    }
+    catch (e) {
+        res.status(500).json({ message: "Error deleting content" });
+    }
+}));
+app.listen(3000, () => {
+    console.log("✅ Server running on port 3000");
 });
-app.get("/api/v1/content", (req, res) => {
-});
-app.delete("/api/v1/content", (req, res) => {
-});
-app.listen(3000);
